@@ -200,8 +200,13 @@ function latestUnreadGroupEmail() {
  * The From line is just text anyone can type, and a domain whose DMARC policy is p=none still has
  * forged mail delivered. But Gmail records its verdict on every email it receives, as an
  * Authentication-Results header added ABOVE all the headers that arrived with the email. Only that
- * first header is read, so one a forger wrote into their own email further down is ignored. It
- * must come from mx.google.com, say dmarc=pass, and name the sender's own domain in header.from.
+ * first header is read, so one a forger wrote into their own email further down is ignored.
+ *
+ * That header also quotes values the sender controls (the envelope address in smtp.mailfrom,
+ * comments in parentheses), so it is parsed into its separate results rather than searched as
+ * text: an envelope address like x.dmarc=pass@evil.com must not read as a DMARC pass. It must
+ * come from exactly mx.google.com, have exactly one dmarc result, and that result must be pass
+ * with header.from exactly the sender's own domain. Anything it can't parse cleanly fails.
  */
 function passedDmarc(message) {
   const raw = message.getRawContent();
@@ -210,15 +215,24 @@ function passedDmarc(message) {
   const first = headers.match(/^Authentication-Results:[ \t]*(.*)$/im);
   if (!first) return false;
 
-  const verdict = first[1].toLowerCase();
+  // Drop quoted strings, then comments (innermost first, as they can nest).
+  let value = first[1].toLowerCase().replace(/"(?:[^"\\]|\\.)*"/g, " ");
+  for (let prev = ""; prev !== value; ) {
+    prev = value;
+    value = value.replace(/\([^()]*\)/g, " ");
+  }
+  if (/[()"]/.test(value)) return false; // unbalanced: don't guess
+
+  const [authserv, ...results] = value.split(";").map((part) => part.trim());
+  if (authserv !== "mx.google.com") return false;
+
+  // Each result is "method=result key=value …"; only the one whose method is dmarc counts.
+  const dmarc = results.filter((r) => r.split(/\s+/)[0].startsWith("dmarc="));
+  if (dmarc.length !== 1) return false;
+  const tokens = dmarc[0].split(/\s+/);
+
   const domain = senderOf(message.getFrom()).split("@")[1] || "";
-  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return (
-    domain !== "" &&
-    verdict.startsWith("mx.google.com;") &&
-    /\bdmarc=pass\b/.test(verdict) &&
-    new RegExp(`header\\.from=${escaped}(?![\\w.-])`).test(verdict)
-  );
+  return domain !== "" && tokens[0] === "dmarc=pass" && tokens.includes(`header.from=${domain}`);
 }
 
 /**
