@@ -33,13 +33,14 @@ The script runs entirely as you, on a one-minute time trigger. It reads your Gma
 2. Keep only unread messages whose subject, up to the `|`, is exactly `PREFIX`. This drops `Re:` and `Fwd:` replies.
 3. Keep only messages whose sender address, the one inside `<…>` and never the display name, is exactly one of `ALLOWED_SENDERS`.
 4. Keep only messages with `GROUP` exactly in To or Cc, so `team@…` does not match `myteam@…`.
-5. Take the newest.
+5. Keep only messages that Gmail itself verified as genuinely from the sender's domain (`dmarc=pass`). See [Security](#security).
+6. Take the newest.
 
 ### Rules it follows
 
 - **First to ask gets it.** Forwarding marks the email read, so later requests get `🤖 No new email to send right now.` until a new one arrives.
 - **Only the person who asked receives it.** The forward goes to that requester's address alone. Copies stay in your Sent folder.
-- **Only emails from listed senders are forwarded.** If `ALLOWED_SENDERS` is empty, nothing is forwarded at all.
+- **Only genuine emails from listed senders are forwarded.** If `ALLOWED_SENDERS` is empty, nothing is forwarded at all, and an email Gmail could not verify is skipped.
 - **Only listed people can ask.** DMs from anyone not in `REQUESTERS`, and messages in group chats, are never read.
 - **Opening the email yourself marks it read**, and the script will then skip it.
 - **Each message is handled once.** The time of the last checked message is stored per requester.
@@ -112,6 +113,7 @@ A test uses up the unread email just as a real request does, so mark it unread a
 | `person@…: Requested entity was not found` in the log | That requester has no 1:1 DM with you, or the address is wrong. Everyone else is still checked. |
 | `🤖 No new email to send right now.` | No unread email matches. It was already sent or opened, or `PREFIX`, `GROUP` or `ALLOWED_SENDERS` doesn't match. Run `latestUnreadGroupEmail` to see what it finds. |
 | `ALLOWED_SENDERS is empty` in the log | Add the sender address. The script refuses to forward anything without one. |
+| `Skipped, failed DMARC (possible forgery)` in the log | Gmail couldn't verify that email as genuine. Open it in Gmail, click **⋮ → Show original**, and check SPF, DKIM and DMARC. If the real emails show `FAIL` there, their sender's mail setup is broken, and that's for their admin to fix. |
 | Nothing happens after 2 minutes | Open the newest row in **Executions** and read the error. |
 | Linking the Cloud project or enabling the Chat API is blocked | A Workspace admin must allow the Cloud project or the Chat API. |
 
@@ -121,15 +123,18 @@ Run `uninstall`. It removes only this script's `checkChat` trigger, so other tri
 
 ## Adding it to an existing Apps Script project
 
-Add `Code.js` as a new script file. First check that the project doesn't already define the same global names (`GROUP`, `ALLOWED_SENDERS`, `PREFIX`, `REQUESTERS`, `KEYWORD`, `TEST_SPACE`, `STATE`, `BOT_MARK`, `install`, `uninstall`, `checkChat`, `reply`, `dmWith`, `latestUnreadGroupEmail`, `senderOf`, `addressesIn`). Merge `appsscript.json` rather than replacing it: add the `Chat` advanced service, and add the five scopes to any existing `oauthScopes` list. The script's saved state uses script properties prefixed with `chatForwarder:`.
+Add `Code.js` as a new script file. First check that the project doesn't already define the same global names (`GROUP`, `ALLOWED_SENDERS`, `PREFIX`, `REQUESTERS`, `KEYWORD`, `TEST_SPACE`, `STATE`, `BOT_MARK`, `install`, `uninstall`, `checkChat`, `reply`, `dmWith`, `latestUnreadGroupEmail`, `passedDmarc`, `senderOf`, `addressesIn`). Merge `appsscript.json` rather than replacing it: add the `Chat` advanced service, and add the five scopes to any existing `oauthScopes` list. The script's saved state uses script properties prefixed with `chatForwarder:`.
 
 ## Security
 
 The forward comes from your own account, so requesters will trust whatever it contains. That makes it worth stopping anyone from planting a look-alike email for the script to pick up:
 
-- **The sender check** is the main guard. Without it, anyone could email you with a fake `To:` of the group address and the right subject.
-- **The From address can still be forged** by an outsider. Gmail rejects or spam-folders forged mail from your own domain when the domain publishes a DMARC policy of `quarantine` or `reject`. Ask your admin to confirm yours does, especially if `ALLOWED_SENDERS` holds an address in your domain or the group address itself. Spam-foldered mail is never picked, because Gmail search skips Spam.
+- **The sender check** stops anyone emailing you with a fake `To:` of the group address and the right subject.
+- **The From address itself can be forged**, because it's just text the sender types. A domain whose DMARC policy is `p=none` still has forged mail delivered to the inbox. So the script also requires Gmail's own verdict: when Gmail receives an email it checks SPF, DKIM and DMARC, and records the result in an `Authentication-Results` header above every header the email arrived with. The script reads only that first header, and forwards only when it comes from `mx.google.com`, says `dmarc=pass`, and names the sender's own domain. A forger can't fake this by adding their own header, because theirs sits further down and is never read. This is the same result Gmail shows under **⋮ → Show original**: if SPF, DKIM and DMARC say `PASS` there, the email qualifies.
+- **Skipped emails are logged.** Each one appears in the Executions log as `Skipped, failed DMARC (possible forgery)`, so you can tell a forgery attempt from a misconfiguration.
+- **Spam-foldered mail is never picked**, because Gmail search skips Spam.
 - **Requests are limited** to the people in `REQUESTERS`, and each forward goes only to the person who asked.
+- **A domain DMARC policy of `quarantine` or `reject` is still worth asking your admin for.** It blocks forged mail for everyone in the organization, not just this script.
 
 ## Limits
 

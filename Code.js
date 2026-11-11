@@ -2,7 +2,8 @@
  * Forward-on-request: when anyone in REQUESTERS asks in their Google Chat DM with you
  * (by typing KEYWORD), forward them the newest UNREAD email from one of ALLOWED_SENDERS,
  * sent to GROUP, whose subject starts with "PREFIX |", then mark that email read so it is
- * sent only once. See README.md for the full setup.
+ * sent only once. Emails Gmail could not verify as genuine (DMARC) are never forwarded.
+ * See README.md for the full setup.
  *
  * Runs as you on a one-minute time trigger, so it reads your Gmail and your Chat DMs.
  * Each requester must already have a DM with you (one message either way is enough).
@@ -153,7 +154,7 @@ function dmWith(requester, props) {
 
 /**
  * Newest UNREAD email from one of ALLOWED_SENDERS, sent to GROUP, whose subject starts with
- * "PREFIX |" (skips Re:/Fwd: replies).
+ * "PREFIX |" (skips Re:/Fwd: replies), and which Gmail verified as genuine (passedDmarc).
  */
 function latestUnreadGroupEmail() {
   const group = GROUP.toLowerCase();
@@ -177,6 +178,12 @@ function latestUnreadGroupEmail() {
     .filter((m) => m.getSubject().split("|")[0].trim() === PREFIX)
     .filter((m) => senders.includes(senderOf(m.getFrom())))
     .filter((m) => addressesIn(m.getTo() + "," + m.getCc()).includes(group))
+    .filter((m) => {
+      // Last, because it reads the whole raw email: only the few candidates left pay for it.
+      if (passedDmarc(m)) return true;
+      console.warn(`Skipped, failed DMARC (possible forgery): ${m.getDate()} — ${m.getSubject()} — ${m.getFrom()}`);
+      return false;
+    })
     .sort((a, b) => b.getDate() - a.getDate())[0];
 
   console.log(
@@ -185,6 +192,33 @@ function latestUnreadGroupEmail() {
       : "No matching unread email found",
   );
   return latest;
+}
+
+/**
+ * True only when Gmail itself verified that the email really comes from its sender's domain.
+ *
+ * The From line is just text anyone can type, and a domain whose DMARC policy is p=none still has
+ * forged mail delivered. But Gmail records its verdict on every email it receives, as an
+ * Authentication-Results header added ABOVE all the headers that arrived with the email. Only that
+ * first header is read, so one a forger wrote into their own email further down is ignored. It
+ * must come from mx.google.com, say dmarc=pass, and name the sender's own domain in header.from.
+ */
+function passedDmarc(message) {
+  const raw = message.getRawContent();
+  const end = raw.search(/\r?\n\r?\n/);
+  const headers = (end === -1 ? raw : raw.slice(0, end)).replace(/\r?\n[ \t]+/g, " "); // unfold
+  const first = headers.match(/^Authentication-Results:[ \t]*(.*)$/im);
+  if (!first) return false;
+
+  const verdict = first[1].toLowerCase();
+  const domain = senderOf(message.getFrom()).split("@")[1] || "";
+  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (
+    domain !== "" &&
+    verdict.startsWith("mx.google.com;") &&
+    /\bdmarc=pass\b/.test(verdict) &&
+    new RegExp(`header\\.from=${escaped}(?![\\w.-])`).test(verdict)
+  );
 }
 
 /**
