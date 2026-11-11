@@ -44,6 +44,16 @@ The script runs entirely as you, on a one-minute time trigger. It reads your Gma
 - **Only listed people can ask.** DMs from anyone not in `REQUESTERS`, and messages in group chats, are never read.
 - **Opening the email yourself marks it read**, and the script will then skip it.
 - **Each message is handled once.** The time of the last checked message is stored per requester.
+- **Every request gets a reply in the same chat**, posted as you and starting with 🤖:
+
+  | What happened | Reply |
+  | --- | --- |
+  | Forwarded | `🤖 Sent ✅ "<subject>" (<date>), check your inbox.` |
+  | Nothing unread to send | `🤖 No new email to send right now.` |
+  | Something failed before the forward | `🤖 Sorry, something went wrong sending it. It's been logged and will be looked into.` |
+  | Forwarded, then something failed (e.g. marking it read) | `🤖 Sent ✅ check your inbox. (Something went wrong afterwards; it's been logged.)` |
+
+  Replies come within about a minute, because the script checks once a minute.
 - **The script ignores its own replies.** They start with 🤖.
 
 ## Setup
@@ -102,7 +112,17 @@ A test uses up the unread email just as a real request does, so mark it unread a
 ## Checking that it works
 
 - **Triggers** (alarm-clock icon): one `checkChat` trigger, time-driven, every minute.
-- **Executions** (list icon): a `checkChat` run about every minute with status **Completed**. A run with an empty log is normal when nobody asked for anything.
+- **Executions** (list icon): a `checkChat` run about every minute with status **Completed**. A run with an empty log is normal when no new Chat messages arrived. Click a run to see what it did. Each line is tagged with the requester whose DM it came from, or `test-space`:
+
+  ```
+  [person@…] ignored, no keyword: "morning! quick question about…"
+  [person@…] request: "send it please"
+  Mon Nov 10 2026 09:00:00 GMT+0800 — Weekly Report | Nov 10
+  [person@…] forwarded "Weekly Report | Nov 10" (Mon Nov 10 2026 09:00:00 GMT+0800) to person@…
+  [person@…] replied: "🤖 Sent ✅ "Weekly Report | Nov 10" (Mon Nov 10 2026), check your inbox."
+  ```
+
+  Chat messages are logged cut to 100 characters, including ones without the keyword. That helps explain why a message didn't trigger anything. Logs are visible only to people who can edit the script.
 - **End to end:** type the keyword in the test space. Check that you get the forward, a `🤖 Sent ✅` reply, and the original now marked read. Type it again, and you should get `🤖 No new email to send right now.`
 
 ## Troubleshooting
@@ -110,8 +130,9 @@ A test uses up the unread email just as a real request does, so mark it unread a
 | Symptom | Cause and fix |
 | --- | --- |
 | `Specified permissions are not sufficient…` | The online `appsscript.json` is out of date, or the new permission hasn't been approved. Update the manifest, then run `install` by hand. |
-| `person@…: Requested entity was not found` in the log | That requester has no 1:1 DM with you, or the address is wrong. Everyone else is still checked. |
+| `person@…: … findDirectMessage failed … The specified direct message doesn't exist` in the log | That requester has no 1:1 DM with you. Start one in Google Chat and send any message; they're picked up on the next run. Also check the address is their main Workspace address, not an alias, and that your own address isn't in `REQUESTERS`. Group chats don't count. Everyone else is still checked. |
 | `🤖 No new email to send right now.` | No unread email matches. It was already sent or opened, or `PREFIX`, `GROUP` or `ALLOWED_SENDERS` doesn't match. Run `latestUnreadGroupEmail` to see what it finds. |
+| `[person@…] request failed: …` in the log | Gmail or Chat returned an error while handling a request. The requester was told something went wrong. The rest of the line is Google's error. If it says `after the forward was sent`, they did get the email, but it may still be unread, so the next requester could receive it again. |
 | `ALLOWED_SENDERS is empty` in the log | Add the sender address. The script refuses to forward anything without one. |
 | `Skipped, failed DMARC (possible forgery)` in the log | Gmail couldn't verify that email as genuine. Open it in Gmail, click **⋮ → Show original**, and check SPF, DKIM and DMARC. If the real emails show `FAIL` there, their sender's mail setup is broken, and that's for their admin to fix. |
 | Nothing happens after 2 minutes | Open the newest row in **Executions** and read the error. |
@@ -123,7 +144,7 @@ Run `uninstall`. It removes only this script's `checkChat` trigger, so other tri
 
 ## Adding it to an existing Apps Script project
 
-Add `Code.js` as a new script file. First check that the project doesn't already define the same global names (`GROUP`, `ALLOWED_SENDERS`, `PREFIX`, `REQUESTERS`, `KEYWORD`, `TEST_SPACE`, `STATE`, `BOT_MARK`, `install`, `uninstall`, `checkChat`, `reply`, `dmWith`, `latestUnreadGroupEmail`, `passedDmarc`, `senderOf`, `addressesIn`). Merge `appsscript.json` rather than replacing it: add the `Chat` advanced service, and add the five scopes to any existing `oauthScopes` list. The script's saved state uses script properties prefixed with `chatForwarder:`.
+Add `Code.js` as a new script file. First check that the project doesn't already define the same global names (`GROUP`, `ALLOWED_SENDERS`, `PREFIX`, `REQUESTERS`, `KEYWORD`, `TEST_SPACE`, `STATE`, `BOT_MARK`, `install`, `uninstall`, `checkChat`, `handleRequest`, `reply`, `dmWith`, `latestUnreadGroupEmail`, `passedDmarc`, `senderOf`, `addressesIn`, `preview`). Merge `appsscript.json` rather than replacing it: add the `Chat` advanced service, and add the five scopes to any existing `oauthScopes` list. The script's saved state uses script properties prefixed with `chatForwarder:`.
 
 ## Security
 

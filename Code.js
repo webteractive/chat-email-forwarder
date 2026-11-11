@@ -113,21 +113,12 @@ function checkChat() {
         props.setProperty(seenKey, msg.createTime);
         const text = (msg.text || "").trim();
         if (text.startsWith(BOT_MARK)) continue; // the script's own reply
-        if (!text.toLowerCase().includes(KEYWORD.toLowerCase())) continue;
-
-        // Searched fresh for each request: an email forwarded a moment ago is now read.
-        const email = latestUnreadGroupEmail();
-        if (!email) {
-          reply(space, "No new email to send right now.");
+        if (!text.toLowerCase().includes(KEYWORD.toLowerCase())) {
+          console.log(`[${place.label}] ignored, no keyword: "${preview(text)}"`);
           continue;
         }
-
-        email.forward(place.recipient());
-        email.markRead(); // only after the forward succeeded, so a failed send stays unread
-        reply(
-          space,
-          `Sent ✅ "${email.getSubject()}" (${email.getDate().toDateString()}), check your inbox.`,
-        );
+        console.log(`[${place.label}] request: "${preview(text)}"`);
+        handleRequest(place, space);
       }
     } catch (e) {
       // One place's problem (e.g. no DM with you yet) must not block everyone else.
@@ -136,9 +127,62 @@ function checkChat() {
   }
 }
 
-/** Posts a reply marked with BOT_MARK so the script recognizes it as its own. */
-function reply(space, text) {
-  Chat.Spaces.Messages.create({ text: `${BOT_MARK} ${text}` }, space);
+/**
+ * Answers one request: forwards the email and confirms, or says there is nothing to send.
+ * Whatever happens, the requester gets a reply, so a failure never leaves them waiting in silence.
+ */
+function handleRequest(place, space) {
+  let forwarded = false;
+  try {
+    // Searched fresh for each request: an email forwarded a moment ago is now read.
+    const email = latestUnreadGroupEmail();
+    if (!email) {
+      reply(space, place.label, "No new email to send right now.");
+      return;
+    }
+
+    const to = place.recipient();
+    email.forward(to);
+    forwarded = true;
+    console.log(
+      `[${place.label}] forwarded "${email.getSubject()}" (${email.getDate()}) to ${to}`,
+    );
+    email.markRead(); // only after the forward succeeded, so a failed send stays unread
+    reply(
+      space,
+      place.label,
+      `Sent ✅ "${email.getSubject()}" (${email.getDate().toDateString()}), check your inbox.`,
+    );
+  } catch (e) {
+    console.error(
+      `[${place.label}] request failed${forwarded ? " after the forward was sent" : ""}: ${e.message}`,
+    );
+    try {
+      reply(
+        space,
+        place.label,
+        forwarded
+          ? "Sent ✅ check your inbox. (Something went wrong afterwards; it's been logged.)"
+          : "Sorry, something went wrong sending it. It's been logged and will be looked into.",
+      );
+    } catch (e2) {
+      // Chat itself is failing; the log is the only place left to record it.
+      console.error(`[${place.label}] could not post the failure reply: ${e2.message}`);
+    }
+  }
+}
+
+/** Posts a reply marked with BOT_MARK so the script recognizes it as its own, and logs it. */
+function reply(space, label, text) {
+  const message = `${BOT_MARK} ${text}`;
+  Chat.Spaces.Messages.create({ text: message }, space);
+  console.log(`[${label}] replied: "${message}"`);
+}
+
+/** A Chat message squeezed onto one log line and cut at 100 characters. */
+function preview(text) {
+  const oneLine = text.replace(/\s+/g, " ");
+  return oneLine.length > 100 ? oneLine.slice(0, 100) + "…" : oneLine;
 }
 
 /** The DM space between you and requester, cached so it's looked up only once. */
