@@ -51,4 +51,4 @@ Keep these in step with every change:
   - "Setting up the forwarder", for owners;
   - "Asking for the email in Google Chat", for requesters.
 
-  Both guides are public. They use the owner's real keyword, `claude-login-link`, rather than the repo's `send it` placeholder. Update them with `get_guide`, then `update_guide`.
+  Documan sits behind the team's Cloudflare Access sign-in, so the guides are team-only, not public. They use the owner's real keyword, `claude-login-link`, rather than the repo's `send it` placeholder. The requester guide also lists the live `REQUESTERS` by name and address, so update it whenever that list changes. Update them with `get_guide`, then `update_guide`.
